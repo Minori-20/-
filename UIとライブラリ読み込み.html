@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>喫食パス(五大隊)</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        :root { --bg: #f0f0f5; --text: #333; --card: #fff; --primary: #0056b3; }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg: #121212; --text: #e0e0e0; --card: #1e1e1e; --primary: #4da3ff; }
+        }
+        body { 
+            background: var(--bg); color: var(--text); font-family: sans-serif; 
+            text-align: center; margin: 0; padding: 20px; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; 
+        }
+        .container { 
+            background: var(--card); padding: 30px; border-radius: 12px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 100%; max-width: 320px; box-sizing: border-box;
+        }
+        #qr-container { 
+            background: #fff; padding: 15px; display: inline-block; 
+            border-radius: 8px; margin-bottom: 15px; 
+        }
+        input, button { 
+            width: 100%; padding: 14px; margin: 10px 0; box-sizing: border-box; 
+            border-radius: 6px; border: 1px solid #ccc; font-size: 16px; 
+        }
+        button { background: var(--primary); color: #fff; border: none; font-weight: bold; cursor: pointer; }
+        button:active { opacity: 0.8; }
+        #progress-bg { width: 100%; height: 8px; background: #ddd; border-radius: 4px; overflow: hidden; margin: 10px 0; }
+        #progress-bar { height: 100%; background: var(--primary); width: 100%; }
+        .hidden { display: none !important; }
+        .error { color: #ff4d4d; font-size: 14px; margin-bottom: 10px; }
+    </style>
+    <!-- 外部CDN: jsSHA (TOTPのハッシュ計算用) と QRCode.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsSHA/3.3.0/sha1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+    <!-- 初回設定画面 -->
+    <div id="setup-view" class="container">
+        <h2>初期設定</h2>
+        <p style="font-size: 14px; color: gray;">学籍番号を登録し、生体認証を紐付けます。</p>
+        <input type="text" id="student-id" placeholder="学籍番号を入力" pattern="\d*">
+        <p id="setup-error" class="error"></p>
+        <button id="register-btn">端末に登録（生体認証）</button>
+    </div>
+
+    <!-- 待機画面（通常時の起動画面） -->
+    <div id="standby-view" class="container hidden">
+        <h2>喫食パス</h2>
+        <p>学籍番号: <strong id="display-student-id"></strong></p>
+        <p id="auth-error" class="error"></p>
+        <button id="auth-btn">生体認証してQRを表示</button>
+        <button id="reset-btn" style="background: transparent; color: var(--primary); border: 1px solid var(--primary); margin-top: 20px;">登録リセット</button>
+    </div>
+
+    <!-- QR表示画面（5秒ごとに更新） -->
+    <div id="active-view" class="container hidden">
+        <div id="qr-container"></div>
+        <div style="font-size: 28px; font-weight: bold; letter-spacing: 2px;" id="totp-text">------</div>
+        <div id="progress-bg"><div id="progress-bar"></div></div>
+        <p>残り <span id="time-left" style="font-weight: bold; font-size: 20px;">5</span> 秒</p>
+        <button id="close-btn" style="background:#555; margin-top:15px;">閉じる</button>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

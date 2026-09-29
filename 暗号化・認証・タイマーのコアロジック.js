@@ -1,0 +1,160 @@
+// --- 1. 設定値 ---
+const SECRET_KEY_BASE32 = "JBSWY3DPEHPK3PXP"; // テスト用シークレットキー（本来は個人ごとにサーバーから発行）
+const INTERVAL_SEC = 5; // 5秒ごとに更新（スクショ対策の要）
+
+let qrcode = null;
+let timerId = null;
+let lastCounter = 0;
+
+// --- 2. TOTP (Time-based One-Time Password) 生成ロジック ---
+function base32tohex(base32) {
+    const base32chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = "";
+    let hex = "";
+    for (let i = 0; i < base32.length; i++) {
+        const val = base32chars.indexOf(base32.charAt(i).toUpperCase());
+        bits += val.toString(2).padStart(5, '0');
+    }
+    for (let i = 0; i < bits.length - 3; i += 4) {
+        hex += parseInt(bits.substring(i, i + 4), 2).toString(16);
+    }
+    return hex;
+}
+
+function generateTOTP() {
+    const epoch = Math.floor(Date.now() / 1000.0);
+    const counter = Math.floor(epoch / INTERVAL_SEC);
+    
+    // カウンターが前回と同じなら再計算しない
+    if (counter === lastCounter) return null;
+    lastCounter = counter;
+
+    const counterHex = counter.toString(16).padStart(16, '0');
+    const secretHex = base32tohex(SECRET_KEY_BASE32);
+
+    const shaObj = new jsSHA("SHA-1", "HEX");
+    shaObj.setHMACKey(secretHex, "HEX");
+    shaObj.update(counterHex);
+    const hmac = shaObj.getHMAC("HEX");
+
+    const offset = parseInt(hmac.substring(hmac.length - 1), 16);
+    const otp = (parseInt(hmac.substring(offset * 2, offset * 2 + 8), 16) & 0x7fffffff) + "";
+    return otp.substring(otp.length - 6).padStart(6, '0'); // 6桁にゼロパディング
+}
+
+// --- 3. UIとQR更新ループ ---
+function startQRDisplay(studentId) {
+    document.getElementById('standby-view').classList.add('hidden');
+    document.getElementById('active-view').classList.remove('hidden');
+
+    if (!qrcode) {
+        qrcode = new QRCode(document.getElementById("qr-container"), {
+            width: 200, height: 200, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M
+        });
+    }
+
+    // 50msごとにプログレスバーを更新し、5秒周期をまたいだらQRを再生成
+    timerId = setInterval(() => {
+        const now = Date.now();
+        const msInInterval = now % (INTERVAL_SEC * 1000);
+        const remainingMs = (INTERVAL_SEC * 1000) - msInInterval;
+
+        // プログレスバーと残り秒数の描画
+        document.getElementById('progress-bar').style.width = (remainingMs / (INTERVAL_SEC * 1000) * 100) + '%';
+        document.getElementById('time-left').innerText = Math.ceil(remainingMs / 1000);
+
+        // TOTP生成とQR描画
+        const totp = generateTOTP();
+        if (totp) {
+            const qrText = `${studentId}:${totp}`;
+            qrcode.clear();
+            qrcode.makeCode(qrText);
+            document.getElementById('totp-text').innerText = totp;
+        }
+    }, 50);
+}
+
+function stopQRDisplay() {
+    clearInterval(timerId);
+    lastCounter = 0;
+    document.getElementById('active-view').classList.add('hidden');
+    document.getElementById('standby-view').classList.remove('hidden');
+}
+
+// --- 4. 生体認証 (WebAuthn API - 簡易ローカルモック実装) ---
+// ※サーバー不要で端末内の生体認証を呼び出すためのハックです
+async function verifyBiometrics() {
+    if (!window.PublicKeyCredential) throw new Error("この端末は生体認証をサポートしていません。");
+    
+    // 常に新しいダミーのチャレンジを生成して認証を要求する
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+
+    try {
+        await navigator.credentials.create({
+            publicKey: {
+                challenge: challenge,
+                rp: { name: "喫食システム", id: window.location.hostname },
+                user: { id: challenge, name: "student", displayName: "Student" },
+                pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+                authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+                timeout: 60000
+            }
+        });
+        return true;
+    } catch (err) {
+        console.error(err);
+        return false;
+    }
+}
+
+// --- 5. イベントリスナーと画面初期化 ---
+window.onload = () => {
+    const storedId = localStorage.getItem('studentId');
+    if (storedId) {
+        document.getElementById('display-student-id').innerText = storedId;
+        document.getElementById('standby-view').classList.remove('hidden');
+    } else {
+        document.getElementById('setup-view').classList.remove('hidden');
+    }
+};
+
+document.getElementById('register-btn').addEventListener('click', async () => {
+    const sId = document.getElementById('student-id').value;
+    if (!sId) return document.getElementById('setup-error').innerText = "学籍番号を入力してください";
+    
+    document.getElementById('setup-error').innerText = "生体認証を要求しています...";
+    const isAuthenticated = await verifyBiometrics();
+    
+    if (isAuthenticated) {
+        localStorage.setItem('studentId', sId);
+        location.reload();
+    } else {
+        document.getElementById('setup-error').innerText = "生体認証に失敗・キャンセルされました。";
+    }
+});
+
+document.getElementById('auth-btn').addEventListener('click', async () => {
+    document.getElementById('auth-error').innerText = "";
+    const isAuthenticated = await verifyBiometrics();
+    
+    if (isAuthenticated) {
+        startQRDisplay(localStorage.getItem('studentId'));
+    } else {
+        document.getElementById('auth-error').innerText = "本人確認ができませんでした。";
+    }
+});
+
+document.getElementById('close-btn').addEventListener('click', stopQRDisplay);
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+    if(confirm("登録をリセットしますか？")) {
+        localStorage.removeItem('studentId');
+        location.reload();
+    }
+});
+
+// Service Workerの登録 (PWA用)
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => console.log('SW Registration failed: ', err));
+}
